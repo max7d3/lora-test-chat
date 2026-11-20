@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LoRa Net - test chat</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; font: 14px/1.4 "Noto Sans Mono", monospace; background: #0b0f12; color: #cfe; }
+  button, input { font: inherit; color: inherit; background: #111a1f; border: 1px solid #2a4650; padding: 6px 10px; }
+  button { cursor: pointer; } button:hover { border-color: #3cf; } button:disabled { opacity: .4; cursor: default; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #1d3038; }
+  header b { color: #3cf; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #a33; display: inline-block; }
+  .dot.on { background: #3c6; } .dot.net { background: #3cf; }
+  #net { color: #8aa; }
+  main { flex: 1; display: flex; min-height: 0; }
+  aside { width: 220px; border-right: 1px solid #1d3038; display: flex; flex-direction: column; }
+  aside form { display: flex; gap: 4px; padding: 8px; } aside form input { width: 100%; }
+  #convos { flex: 1; overflow-y: auto; }
+  .convo { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #142228; display: flex; justify-content: space-between; }
+  .convo:hover { background: #111a1f; } .convo.sel { background: #12262e; color: #3cf; }
+  .badge { background: #3cf; color: #000; border-radius: 9px; padding: 0 6px; font-size: 12px; }
+  section { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 70%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+  .msg.in { align-self: flex-start; background: #17252c; }
+  .msg.out { align-self: flex-end; background: #0f3a48; }
+  .msg small { display: block; font-size: 11px; color: #789; }
+  .msg.err { border: 1px solid #a33; }
+  #compose { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid #1d3038; }
+  #compose input { flex: 1; }
+  #empty { margin: auto; color: #567; }
+  details { border-top: 1px solid #1d3038; }
+  summary { padding: 4px 12px; cursor: pointer; color: #567; }
+  @media (max-width: 700px) {
+    header { flex-wrap: wrap; gap: 6px 12px; }
+    aside { width: 110px; }
+    .msg { max-width: 85%; }
+  }
+  #log { height: 140px; overflow-y: auto; margin: 0; padding: 4px 12px; font-size: 12px; color: #6a8; }
+</style>
+</head>
+<body>
+<header>
+  <b>LoRa Net chat</b>
+  <span><span id="dot" class="dot"></span> <span id="conn">disconnected</span></span>
+  <span id="myid"></span>
+  <span id="net"></span>
+  <span style="flex:1"></span>
+  <label title="Replies &quot;Hello&quot; to &quot;Hi!&quot;"><input type="checkbox" id="auto"> auto-reply</label>
+  <label title="Logs GPS + RSSI/SNR on every status poll"><input type="checkbox" id="geo"> range log <span id="geocnt"></span></label>
+  <button id="csv" disabled>CSV</button>
+  <button id="btn">Connect</button>
+</header>
+<main>
+  <aside>
+    <form id="newconvo"><input id="newid" placeholder="ID, e.g. 0x0002"><button>+</button></form>
+    <div id="convos"></div>
+  </aside>
+  <section>
+    <div id="msgs"><div id="empty">Pick or start a conversation</div></div>
+    <form id="compose"><input id="text" maxlength="116" placeholder="Message (max 116 chars)" disabled><button id="sendbtn" disabled>Send</button></form>
+  </section>
+</main>
+<details><summary>serial log</summary><pre id="log"></pre></details>
+
+<script>
+const $ = id => document.getElementById(id);
+const hex4 = n => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
+
+/* ---------- Conversations (in memory, fresh on every load) ---------- */
+const convos = {};   // id -> { msgs: [{dir, text, t, st}], unread }
+let current = null;
+
+function convo(id) { return convos[id] ??= { msgs: [], unread: 0 }; }
+
+function renderList() {
+  $('convos').innerHTML = '';
+  for (const id of Object.keys(convos)) {
+    const el = document.createElement('div');
+    el.className = 'convo' + (id === current ? ' sel' : '');
+    el.innerHTML = `<span>${id}</span>` + (convos[id].unread ? `<span class="badge">${convos[id].unread}</span>` : '');
+    el.onclick = () => select(id);
+    $('convos').append(el);
+  }
+}
+
+function renderMsgs() {
+  const box = $('msgs');
+  box.innerHTML = '';
+  if (!current) { box.innerHTML = '<div id="empty">Pick or start a conversation</div>'; return; }
+  for (const m of convos[current].msgs) {
+    const el = document.createElement('div');
+    el.className = `msg ${m.dir}` + (m.st === 'err' ? ' err' : '');
+    el.textContent = m.text;
+    const info = document.createElement('small');
+    const time = new Date(m.t).toLocaleTimeString();
+    info.textContent = m.dir === 'out' ? `${time} · ${{ wait: 'sending…', ok: 'queued ✓', err: 'failed ✗' }[m.st]}` : time;
+    el.append(info);
+    box.append(el);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function select(id) {
+  current = id;
+  convo(id).unread = 0;
+  renderList(); renderMsgs();
+  $('text').disabled = $('sendbtn').disabled = !port;
+  $('text').focus();
+}
+
+$('newconvo').onsubmit = e => {
+  e.preventDefault();
+  const n = parseInt($('newid').value.trim(), 16);   // "0x0002" and "2" both work
+  if (isNaN(n) || n < 0 || n > 0xFFFF) return;
+  $('newid').value = '';
+  select(hex4(n));
+};
+
+/* ---------- Serial ---------- */
+let port = null, writer = null, reader = null, readDone = null;
+let waiting = null;                 // resolve of the command waiting for its reply line
+let chain = Promise.resolve();      // commands go one at a time
+let poll = null;
+
+function log(s) {
+  const l = $('log');
+  l.textContent += s + '\n';
+  if (l.textContent.length > 20000) l.textContent = l.textContent.slice(-15000);
+  l.scrollTop = l.scrollHeight;
+}
+
+/* Sends a CLI line, resolves with the reply line (null on timeout). */
+function cmd(line, timeout = 2000) {
+  const p = chain.then(() => new Promise(async resolve => {
+    const timer = setTimeout(() => { waiting = null; log('! timeout: ' + line); resolve(null); }, timeout);
+    waiting = reply => { clearTimeout(timer); resolve(reply); };
+    log('> ' + line);
+    await writer.write(line + '\r\n');
+  }));
+  chain = p.catch(() => {});
+  return p;
+}
+
+function onLine(line) {
+  if (!line) return;
+  log('< ' + line);
+  if (line.startsWith('evt ')) { onEvent(parseInt(line.slice(4))); return; }
+  if (waiting) { const w = waiting; waiting = null; w(line); }
+}
+
+async function onEvent(code) {
+  if (code !== 0) return;   // 0: message received
+  const r = await cmd('getmsg');
+  const m = r && r.match(/^from:(0x[0-9A-Fa-f]{4}) "(.*)"$/);
+  if (!m) return;
+  const id = m[1].toUpperCase().replace('0X', '0x');
+  const c = convo(id);
+  c.msgs.push({ dir: 'in', text: m[2], t: Date.now() });
+  if (id !== current) c.unread++;
+  renderList();
+  if (id === current) renderMsgs();
+  if ($('auto').checked && m[2] === 'Hi!') sendTo(id, 'Hello');   // range test: ping from the walking device
+}
+
+async function readLoop() {
+  const decoder = new TextDecoderStream();
+  const closed = port.readable.pipeTo(decoder.writable).catch(() => {});
+  reader = decoder.readable.getReader();
+  let buf = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      lines.forEach(onLine);
+    }
+  } catch (e) { log('! ' + e); }
+  reader.releaseLock();
+  await closed;
+}
+
+async function updateStatus() {
+  const r = await cmd('status');
+  if (!r) return;
+  const m = r.match(/^status:conn sta:(\S+) tslb:(\d+) rssi:(-?\d+) snr:(-?\d+)/);
+  logSample(m);
+  $('dot').className = 'dot ' + (m ? 'net' : 'on');
+  $('net').textContent = m ? `station ${m[1]} · beacon ${(m[2] / 1000).toFixed(1)} s ago · RSSI ${m[3]} dBm · SNR ${m[4]} dB` : 'no network';
+}
+
+/* Android Chrome has navigator.serial, but it lists no wired USB ports (until Android 17-ish),
+ * so there (or without Web Serial at all) talk CDC-ACM over WebUSB through Google's polyfill. */
+async function getSerial() {
+  const android = /Android/i.test(navigator.userAgent);
+  if ('serial' in navigator && !android) return navigator.serial;
+  if ('usb' in navigator) return (await import('https://unpkg.com/web-serial-polyfill@1.0.15/dist/serial.js')).serial;
+  if ('serial' in navigator) return navigator.serial;
+  throw new Error('Neither Web Serial nor WebUSB available, use Chrome / Edge');
+}
+
+async function connect() {
+  const api = await getSerial();
+  log('using ' + (api === navigator.serial ? 'Web Serial' : 'WebUSB polyfill'));
+  port = await api.requestPort();
+  await port.open({ baudRate: 115200 });     // ignored by USB-CDC, needed for UART later
+  const enc = new TextEncoderStream();
+  enc.readable.pipeTo(port.writable).catch(() => {});
+  writer = enc.writable.getWriter();
+
+  readDone = readLoop();
+  readDone.then(() => { if (port) disconnected(); });
+  $('conn').textContent = 'connected'; $('dot').className = 'dot on'; $('btn').textContent = 'Disconnect';
+  if (current) select(current);
+
+  await writer.write('\r\n');                // flush a half typed line, its err reply is dropped below
+  await new Promise(r => setTimeout(r, 200));
+  waiting = null;
+  await cmd('imbin');                        // terse replies, nothing to parse in ()
+  const id = await cmd('myid');
+  $('myid').textContent = id ? 'me: ' + id : '';
+  await updateStatus();
+  poll = setInterval(updateStatus, 3000);
+}
+
+function disconnected() {
+  clearInterval(poll);
+  port = writer = waiting = null;
+  chain = Promise.resolve();
+  $('conn').textContent = 'disconnected'; $('dot').className = 'dot'; $('btn').textContent = 'Connect';
+  $('myid').textContent = $('net').textContent = '';
+  $('text').disabled = $('sendbtn').disabled = true;
+}
+
+$('btn').onclick = async () => {
+  if (!port) { connect().catch(e => { log('! ' + e); disconnected(); }); return; }
+  const p = port, w = writer, done = readDone;
+  disconnected();
+  try { await reader.cancel(); await done; } catch {}
+  try { await w.close(); } catch {}
+  try { await p.close(); } catch (e) { log('! ' + e); }
+};
+
+navigator.serial?.addEventListener('disconnect', e => { if (e.target === port) disconnected(); });
+
+$('compose').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('text').value.trim();
+  if (!text || !current || !port) return;
+  $('text').value = '';
+  sendTo(current, text);
+};
+
+async function sendTo(id, text) {
+  text = text.replaceAll('"', "'");   // CLI has no escapes inside "..."
+  const msg = { dir: 'out', text, t: Date.now(), st: 'wait' };
+  convo(id).msgs.push(msg);
+  if (id === current) renderMsgs();
+  const r = await cmd(`sendmsg 1 ${id} "${text}"`);
+  msg.st = r === 'ok' ? 'ok' : 'err';
+  if (id === current) renderMsgs();
+}
+
+/* ---------- Range log (GPS + link quality) ---------- */
+let fix = null, geoWatch = null, wakeLock = null;
+const samples = [];
+
+/* One row per status poll. rssi/snr are of the last received packet, tslb says how fresh they are. */
+function logSample(m) {
+  if (!$('geo').checked || !fix) return;
+  samples.push({
+    time: new Date().toISOString(),
+    lat: fix.latitude.toFixed(6), lon: fix.longitude.toFixed(6), acc_m: Math.round(fix.accuracy),
+    state: m ? 'conn' : 'no_conn',
+    sta: m ? m[1] : '', tslb_ms: m ? m[2] : '', rssi: m ? m[3] : '', snr: m ? m[4] : '',
+  });
+  $('geocnt').textContent = `(${samples.length})`;
+  $('csv').disabled = false;
+}
+
+$('geo').onchange = async () => {
+  if ($('geo').checked) {
+    if (!('geolocation' in navigator)) { alert('No geolocation'); $('geo').checked = false; return; }
+    geoWatch = navigator.geolocation.watchPosition(
+      p => { fix = p.coords; },
+      e => { log('! geolocation: ' + e.message); },
+      { enableHighAccuracy: true, maximumAge: 2000 });
+    // Screen off = page suspended = no polling, keep it on while walking around
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) { log('! wake lock: ' + e); }
+  } else {
+    navigator.geolocation.clearWatch(geoWatch);
+    wakeLock?.release(); wakeLock = null; fix = null;
+  }
+};
+
+// The wake lock is dropped whenever the tab is hidden, take it again on return
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && $('geo').checked && (!wakeLock || wakeLock.released)) {
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+  }
+});
+
+$('csv').onclick = () => {
+  const cols = Object.keys(samples[0]);
+  const csv = [cols.join(','), ...samples.map(s => cols.map(c => s[c]).join(','))].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `range_${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+renderList();
+</script>
+</body>
+</html>
