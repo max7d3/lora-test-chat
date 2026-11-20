@@ -2,70 +2,94 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LoRa Net - test chat</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column; font: 14px/1.4 "Noto Sans Mono", monospace; background: #0b0f12; color: #cfe; }
-  button, input { font: inherit; color: inherit; background: #111a1f; border: 1px solid #2a4650; padding: 6px 10px; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; font: 17px/1.4 "Noto Sans Mono", monospace; background: #0b0f12; color: #cfe; }
+  button, input { font: inherit; color: inherit; background: #111a1f; border: 1px solid #2a4650; border-radius: 8px; padding: 10px 14px; min-height: 46px; }
   button { cursor: pointer; } button:hover { border-color: #3cf; } button:disabled { opacity: .4; cursor: default; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #1d3038; }
-  header b { color: #3cf; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #a33; display: inline-block; }
+  input[type=checkbox] { min-height: 0; width: 22px; height: 22px; vertical-align: middle; accent-color: #3cf; }
+  header { padding: 8px 12px; border-bottom: 1px solid #1d3038; display: flex; flex-direction: column; gap: 6px; }
+  .row { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; }
+  header b { color: #3cf; font-size: 20px; }
+  .grow { flex: 1; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: #a33; display: inline-block; vertical-align: middle; }
   .dot.on { background: #3c6; } .dot.net { background: #3cf; }
-  #net { color: #8aa; }
+  #net { color: #8aa; font-size: 15px; }
+  label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; }
   main { flex: 1; display: flex; min-height: 0; }
-  aside { width: 220px; border-right: 1px solid #1d3038; display: flex; flex-direction: column; }
-  aside form { display: flex; gap: 4px; padding: 8px; } aside form input { width: 100%; }
+  aside { width: 240px; border-right: 1px solid #1d3038; display: flex; flex-direction: column; }
+  aside form { display: flex; gap: 6px; padding: 8px; } aside form input { width: 100%; min-width: 0; }
   #convos { flex: 1; overflow-y: auto; }
-  .convo { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #142228; display: flex; justify-content: space-between; }
+  .convo { padding: 14px; cursor: pointer; border-bottom: 1px solid #142228; display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
   .convo:hover { background: #111a1f; } .convo.sel { background: #12262e; color: #3cf; }
-  .badge { background: #3cf; color: #000; border-radius: 9px; padding: 0 6px; font-size: 12px; }
+  .badge { background: #3cf; color: #000; border-radius: 10px; padding: 0 8px; font-size: 14px; }
   section { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
-  .msg { max-width: 70%; padding: 6px 10px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+  #msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
   .msg.in { align-self: flex-start; background: #17252c; }
   .msg.out { align-self: flex-end; background: #0f3a48; }
-  .msg small { display: block; font-size: 11px; color: #789; }
+  .msg small { display: block; font-size: 13px; color: #789; }
   .msg.err { border: 1px solid #a33; }
   #compose { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid #1d3038; }
-  #compose input { flex: 1; }
-  #empty { margin: auto; color: #567; }
+  #compose input { flex: 1; min-width: 0; }
+  #ping { color: #3cf; }
+  #empty { margin: auto; color: #567; text-align: center; padding: 12px; }
   details { border-top: 1px solid #1d3038; }
-  summary { padding: 4px 12px; cursor: pointer; color: #567; }
+  summary { padding: 8px 12px; cursor: pointer; color: #567; }
+  #log { height: 160px; overflow-y: auto; margin: 0; padding: 4px 12px; font-size: 13px; color: #6a8; }
+
+  /* Phone: conversations become a horizontal strip above the chat */
   @media (max-width: 700px) {
-    header { flex-wrap: wrap; gap: 6px 12px; }
-    aside { width: 110px; }
-    .msg { max-width: 85%; }
+    body { font-size: 18px; }
+    main { flex-direction: column; }
+    aside { width: auto; border-right: 0; border-bottom: 1px solid #1d3038; flex-direction: row; align-items: center; }
+    aside form { flex: 0 0 auto; } aside form input { width: 7.5em; }
+    #convos { display: flex; overflow-x: auto; overflow-y: hidden; }
+    .convo { border-bottom: 0; border-left: 1px solid #142228; }
+    .msg { max-width: 88%; }
   }
-  #log { height: 140px; overflow-y: auto; margin: 0; padding: 4px 12px; font-size: 12px; color: #6a8; }
 </style>
 </head>
 <body>
 <header>
-  <b>LoRa Net chat</b>
-  <span><span id="dot" class="dot"></span> <span id="conn">disconnected</span></span>
-  <span id="myid"></span>
-  <span id="net"></span>
-  <span style="flex:1"></span>
-  <label title="Replies &quot;Hello&quot; to &quot;Hi!&quot;"><input type="checkbox" id="auto"> auto-reply</label>
-  <label title="Logs GPS + RSSI/SNR on every status poll"><input type="checkbox" id="geo"> range log <span id="geocnt"></span></label>
-  <button id="csv" disabled>CSV</button>
-  <button id="btn">Connect</button>
+  <div class="row">
+    <b>LoRa Net chat</b>
+    <span><span id="dot" class="dot"></span> <span id="conn">disconnected</span></span>
+    <span id="myid"></span>
+    <span class="grow"></span>
+    <button id="btn">Connect</button>
+  </div>
+  <div class="row"><span id="net"></span></div>
+  <div class="row">
+    <label title="Replies &quot;Hello&quot; to &quot;Hi!&quot;"><input type="checkbox" id="auto"> auto-reply</label>
+    <label title="Logs GPS + RSSI/SNR on every status poll"><input type="checkbox" id="geo"> range log <span id="geocnt"></span></label>
+    <button id="csv" disabled>CSV</button>
+  </div>
 </header>
 <main>
   <aside>
-    <form id="newconvo"><input id="newid" placeholder="ID, e.g. 0x0002"><button>+</button></form>
+    <form id="newconvo"><input id="newid" placeholder="ID 0x0002" inputmode="text" autocapitalize="off"><button>+</button></form>
     <div id="convos"></div>
   </aside>
   <section>
     <div id="msgs"><div id="empty">Pick or start a conversation</div></div>
-    <form id="compose"><input id="text" maxlength="116" placeholder="Message (max 116 chars)" disabled><button id="sendbtn" disabled>Send</button></form>
+    <form id="compose"><input id="text" maxlength="116" placeholder="Message (max 116 chars)" disabled><button type="button" id="ping" disabled title="Sends Hi!">PING</button><button id="sendbtn" disabled>Send</button></form>
   </section>
 </main>
 <details><summary>serial log</summary><pre id="log"></pre></details>
 
 <script>
 const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const CMD_GAP_MS = 20;           // between CLI commands
+const AUTO_CMD_GAP_MS = 300;     // between CLI commands while auto-reply is on (unattended board)
+const SEND_GAP_MS = 500;         // between sendmsg
+const POLL_MS = 1000;            // status poll (and range log sample) period
+const AUTO_DELAY_MS = 1000;      // before an auto-reply
+const AUTO_COOLDOWN_MS = 5000;   // at most one auto-reply per this
 const hex4 = n => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
 
 /* ---------- Conversations (in memory, fresh on every load) ---------- */
@@ -106,7 +130,7 @@ function select(id) {
   current = id;
   convo(id).unread = 0;
   renderList(); renderMsgs();
-  $('text').disabled = $('sendbtn').disabled = !port;
+  $('text').disabled = $('sendbtn').disabled = $('ping').disabled = !port;
   $('text').focus();
 }
 
@@ -139,7 +163,7 @@ function cmd(line, timeout = 2000) {
     log('> ' + line);
     await writer.write(line + '\r\n');
   }));
-  chain = p.catch(() => {});
+  chain = p.catch(() => {}).then(() => sleep($('auto').checked ? AUTO_CMD_GAP_MS : CMD_GAP_MS));
   return p;
 }
 
@@ -161,7 +185,7 @@ async function onEvent(code) {
   if (id !== current) c.unread++;
   renderList();
   if (id === current) renderMsgs();
-  if ($('auto').checked && m[2] === 'Hi!') sendTo(id, 'Hello');   // range test: ping from the walking device
+  if ($('auto').checked && m[2] === 'Hi!') autoReply(id);   // range test: ping from the walking device
 }
 
 async function readLoop() {
@@ -183,8 +207,11 @@ async function readLoop() {
   await closed;
 }
 
+let polling = false;   // skip a poll while the last one still waits (timeouts would pile up at 1 s)
 async function updateStatus() {
-  const r = await cmd('status');
+  if (polling) return;
+  polling = true;
+  const r = await cmd('status').finally(() => { polling = false; });
   if (!r) return;
   const m = r.match(/^status:conn sta:(\S+) tslb:(\d+) rssi:(-?\d+) snr:(-?\d+)/);
   logSample(m);
@@ -223,7 +250,7 @@ async function connect() {
   const id = await cmd('myid');
   $('myid').textContent = id ? 'me: ' + id : '';
   await updateStatus();
-  poll = setInterval(updateStatus, 3000);
+  poll = setInterval(updateStatus, POLL_MS);
 }
 
 function disconnected() {
@@ -232,7 +259,7 @@ function disconnected() {
   chain = Promise.resolve();
   $('conn').textContent = 'disconnected'; $('dot').className = 'dot'; $('btn').textContent = 'Connect';
   $('myid').textContent = $('net').textContent = '';
-  $('text').disabled = $('sendbtn').disabled = true;
+  $('text').disabled = $('sendbtn').disabled = $('ping').disabled = true;
 }
 
 $('btn').onclick = async () => {
@@ -254,7 +281,24 @@ $('compose').onsubmit = async e => {
   sendTo(current, text);
 };
 
-async function sendTo(id, text) {
+let lastAuto = 0;
+async function autoReply(id) {
+  if (Date.now() - lastAuto < AUTO_COOLDOWN_MS) { log('auto-reply skipped (cooldown)'); return; }
+  lastAuto = Date.now();
+  await sleep(AUTO_DELAY_MS);
+  if (port) sendTo(id, 'Hello');
+}
+
+$('ping').onclick = () => { if (current && port) sendTo(current, 'Hi!'); };
+
+let sendChain = Promise.resolve();   // keeps sendmsg calls SEND_GAP_MS apart
+function sendTo(id, text) {
+  const p = sendChain.then(() => sendNow(id, text));
+  sendChain = p.catch(() => {}).then(() => sleep(SEND_GAP_MS));
+  return p;
+}
+
+async function sendNow(id, text) {
   text = text.replaceAll('"', "'");   // CLI has no escapes inside "..."
   const msg = { dir: 'out', text, t: Date.now(), st: 'wait' };
   convo(id).msgs.push(msg);
